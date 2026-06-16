@@ -1,0 +1,89 @@
+:root {
+  --mat: #f5e4b2;
+  --ink: #2b2620;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: #faf6ec;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  margin: 0 0 32px;
+  opacity: 0.7;
+}
+
+.dropzone {
+  border: 2px dashed #d8c590;
+  border-radius: 16px;
+  padding: 32px;
+  text-align: center;
+  background: #fffdf7;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumbs img {
+  width: 72px;
+  height: 104px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e3d5a8;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 10px;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.result {
+  margin-top: 32px;
+}
+
+.result img {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 12px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.error {
+  color: #a3341f;
+  margin-top: 16px;
+}
