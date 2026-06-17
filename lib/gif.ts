@@ -27,6 +27,9 @@ export const HOUSE_STYLE = {
   loop: 0,
   // Max palette-search effort; quality matters more than encode time here.
   effort: 10,
+  // Neutralize color casts (e.g. the olive tint shade-shot photos pick up from
+  // green-environment bounce light) before quantization. On by default.
+  whiteBalance: true,
 } as const;
 
 export type CropRect = { left: number; top: number; width: number; height: number };
@@ -38,6 +41,7 @@ export type RenderOptions = {
   dither?: number;
   colors?: number;
   scale?: number;
+  whiteBalance?: boolean;
   crops?: (CropRect | null)[];
 };
 
@@ -64,12 +68,27 @@ async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sh
   return img.extract({ left, top, width, height });
 }
 
+// Gray-world white balance: assume the scene averages to neutral and scale each
+// channel toward the overall mean. Gains are clamped so frames that are
+// legitimately color-dominant (lots of green foliage, a saturated garment) get
+// corrected without swinging hard the other way.
+async function grayWorldGains(photo: Buffer): Promise<[number, number, number]> {
+  const { channels } = await sharp(photo).stats();
+  const meanR = channels[0]?.mean ?? 0;
+  const meanG = channels[1]?.mean ?? 0;
+  const meanB = channels[2]?.mean ?? 0;
+  const gray = (meanR + meanG + meanB) / 3;
+  const gain = (mean: number) => (mean > 1 ? clamp(gray / mean, 0.8, 1.25) : 1);
+  return [gain(meanR), gain(meanG), gain(meanB)];
+}
+
 async function renderFrame(
   photo: Buffer,
   format: OutputFormat,
   matColor: string,
   crop: CropRect | null,
   scale: number,
+  whiteBalance: boolean,
 ): Promise<Buffer> {
   const base = FORMATS[format];
   const canvasWidth = Math.round(base.canvasWidth * scale);
@@ -79,18 +98,24 @@ async function renderFrame(
   const cardWidth = canvasWidth - matInset * 2;
   const cardHeight = canvasHeight - matInset * 2;
 
-  let card = (await applyCrop(photo, crop)).resize(cardWidth, cardHeight, {
-    fit: "cover",
-    position: "centre",
-  });
+  let cardBuffer = await (await applyCrop(photo, crop))
+    .resize(cardWidth, cardHeight, { fit: "cover", position: "centre" })
+    .png()
+    .toBuffer();
 
-  if (cornerRadius > 0) {
-    card = card.composite([
-      { input: roundedMask(cardWidth, cardHeight, cornerRadius), blend: "dest-in" },
-    ]);
+  // White-balance the photo content before it gets the rounded mask, so the mat
+  // and transparent corners never skew the channel means.
+  if (whiteBalance) {
+    const gains = await grayWorldGains(cardBuffer);
+    cardBuffer = await sharp(cardBuffer).linear(gains, [0, 0, 0]).png().toBuffer();
   }
 
-  const cardBuffer = await card.png().toBuffer();
+  if (cornerRadius > 0) {
+    cardBuffer = await sharp(cardBuffer)
+      .composite([{ input: roundedMask(cardWidth, cardHeight, cornerRadius), blend: "dest-in" }])
+      .png()
+      .toBuffer();
+  }
 
   return sharp({
     create: {
@@ -226,16 +251,24 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
   const dither = options?.dither ?? HOUSE_STYLE.dither;
   const colors = options?.colors ?? HOUSE_STYLE.colors;
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
+  const whiteBalance = options?.whiteBalance ?? HOUSE_STYLE.whiteBalance;
   const crops = options?.crops ?? [];
 
   const frames = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale)),
+    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, whiteBalance)),
   );
 
+  // sharp 0.35's `colours` option routes through a broken colours->bitdepth
+  // conversion that only ever yields palettes of 2/4/16/256, so 32/64/128 all
+  // collapse to 16 colors and dense photos posterize with a green/olive cast.
+  // Set the libvips bitdepth directly to get the requested palette size.
+  const bitdepth = clamp(Math.ceil(Math.log2(clamp(colors, 2, 256))), 1, 8);
   const singleGifs = await Promise.all(
-    frames.map((f) =>
-      sharp(f).gif({ colours: colors, dither, effort: HOUSE_STYLE.effort }).toBuffer(),
-    ),
+    frames.map((f) => {
+      const encoder = sharp(f).gif({ dither, effort: HOUSE_STYLE.effort });
+      (encoder as unknown as { options: { gifBitdepth: number } }).options.gifBitdepth = bitdepth;
+      return encoder.toBuffer();
+    }),
   );
 
   if (singleGifs.length === 1) return singleGifs[0];

@@ -197,6 +197,7 @@ export default function Home() {
   const [dither, setDither] = useState(1);
   const [colors, setColors] = useState(256);
   const [scale, setScale] = useState(0.5);
+  const [whiteBalance, setWhiteBalance] = useState(true);
   const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
   const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
@@ -297,6 +298,7 @@ export default function Home() {
       body.append("dither", String(dither));
       body.append("colors", String(colors));
       body.append("scale", String(scale));
+      body.append("whiteBalance", String(whiteBalance));
       const res = await fetch("/api/render", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -471,6 +473,27 @@ export default function Home() {
             <option value={64}>64</option>
             <option value={32}>32 (smallest file)</option>
           </select>
+        </div>
+        <div className="field">
+          <label>Auto color correction — neutralizes green/olive casts from shade light</label>
+          <div className="seg">
+            <button
+              className="seg-btn"
+              type="button"
+              aria-pressed={whiteBalance}
+              onClick={() => setWhiteBalance(true)}
+            >
+              On
+            </button>
+            <button
+              className="seg-btn"
+              type="button"
+              aria-pressed={!whiteBalance}
+              onClick={() => setWhiteBalance(false)}
+            >
+              Off
+            </button>
+          </div>
         </div>
       </div>
 
