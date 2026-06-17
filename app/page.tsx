@@ -257,24 +257,49 @@ export default function Home() {
     setEditing(null);
   }
 
-  async function compressPhoto(file: File): Promise<Blob> {
-    const MAX_PX = 2400;
-    const QUALITY = 0.88;
+  // Compress one photo toward a byte target, keeping quality as high as
+  // possible. Resolution is capped at 1600px (the card maxes out at 1560px, so
+  // this is effectively lossless relative to the output) and only stepped down
+  // as a last resort. Returns the best result even if it can't hit the target;
+  // the caller decides whether the whole batch fits the upload budget.
+  async function compressPhoto(file: File, targetBytes: number): Promise<Blob> {
+    const DIMS = [1600, 1400, 1100];
+    const QUALITIES = [0.88, 0.82, 0.76, 0.7];
     return new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(file);
-      img.onload = () => {
+      img.onload = async () => {
         URL.revokeObjectURL(url);
-        const scale = Math.min(1, MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
-        const w = Math.round(img.naturalWidth * scale);
-        const h = Math.round(img.naturalHeight * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return reject(new Error("Canvas unavailable"));
-        ctx.drawImage(img, 0, 0, w, h);
-        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Compression failed")), "image/jpeg", QUALITY);
+        const encode = (px: number, q: number) =>
+          new Promise<Blob>((res, rej) => {
+            const s = Math.min(1, px / Math.max(img.naturalWidth, img.naturalHeight));
+            const w = Math.round(img.naturalWidth * s);
+            const h = Math.round(img.naturalHeight * s);
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return rej(new Error("Canvas unavailable"));
+            ctx.drawImage(img, 0, 0, w, h);
+            canvas.toBlob(
+              (blob) => (blob ? res(blob) : rej(new Error("Compression failed"))),
+              "image/jpeg",
+              q,
+            );
+          });
+        try {
+          let best: Blob | null = null;
+          for (const px of DIMS) {
+            for (const q of QUALITIES) {
+              const blob = await encode(px, q);
+              best = blob;
+              if (blob.size <= targetBytes) return resolve(blob);
+            }
+          }
+          resolve(best as Blob);
+        } catch (err) {
+          reject(err);
+        }
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
       img.src = url;
@@ -286,12 +311,28 @@ export default function Home() {
     setError(null);
     setGifUrl(null);
     try {
+      // Vercel caps the function request body at 4.5MB; stay safely under it
+      // (multipart overhead + other fields). Split the budget across photos so
+      // each one is compressed only as hard as the batch size requires.
+      const UPLOAD_BUDGET = 3.8 * 1024 * 1024;
+      const targetBytes = UPLOAD_BUDGET / files.length;
+      const compressed = await Promise.all(files.map((f) => compressPhoto(f, targetBytes)));
+      const total = compressed.reduce((sum, b) => sum + b.size, 0);
+      if (total > UPLOAD_BUDGET) {
+        setError(
+          `These ${files.length} photos compress to ${(total / 1024 / 1024).toFixed(1)} MB, ` +
+            `over the ${(UPLOAD_BUDGET / 1024 / 1024).toFixed(1)} MB upload limit. ` +
+            `Remove a few photos and try again.`,
+        );
+        setBusy(false);
+        return;
+      }
+
       const body = new FormData();
-      await Promise.all(files.map(async (f) => {
-        const compressed = await compressPhoto(f);
-        body.append("photos", compressed, f.name.replace(/\.[^.]+$/, ".jpg"));
+      files.forEach((f, i) => {
+        body.append("photos", compressed[i], f.name.replace(/\.[^.]+$/, ".jpg"));
         body.append("crops", JSON.stringify(crops.get(f) ?? null));
-      }));
+      });
       body.append("format", format);
       body.append("matColor", matColor);
       body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
