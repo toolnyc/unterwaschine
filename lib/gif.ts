@@ -27,9 +27,10 @@ export const HOUSE_STYLE = {
   loop: 0,
   // Max palette-search effort; quality matters more than encode time here.
   effort: 10,
-  // Neutralize color casts (e.g. the olive tint shade-shot photos pick up from
-  // green-environment bounce light) before quantization. On by default.
-  whiteBalance: true,
+  // Strength (0-1) of the skin green-cast correction. Open shade and green
+  // bounce light leave an olive tint on skin; this pulls it back toward warm
+  // without touching the green garment or foliage. 0 disables it.
+  skinCorrect: 0.6,
 } as const;
 
 export type CropRect = { left: number; top: number; width: number; height: number };
@@ -41,7 +42,7 @@ export type RenderOptions = {
   dither?: number;
   colors?: number;
   scale?: number;
-  whiteBalance?: boolean;
+  skinCorrect?: number;
   crops?: (CropRect | null)[];
 };
 
@@ -68,18 +69,44 @@ async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sh
   return img.extract({ left, top, width, height });
 }
 
-// Gray-world white balance: assume the scene averages to neutral and scale each
-// channel toward the overall mean. Gains are clamped so frames that are
-// legitimately color-dominant (lots of green foliage, a saturated garment) get
-// corrected without swinging hard the other way.
-async function grayWorldGains(photo: Buffer): Promise<[number, number, number]> {
-  const { channels } = await sharp(photo).stats();
-  const meanR = channels[0]?.mean ?? 0;
-  const meanG = channels[1]?.mean ?? 0;
-  const meanB = channels[2]?.mean ?? 0;
-  const gray = (meanR + meanG + meanB) / 3;
-  const gain = (mean: number) => (mean > 1 ? clamp(gray / mean, 0.8, 1.25) : 1);
-  return [gain(meanR), gain(meanG), gain(meanB)];
+const smoothstep = (edge0: number, edge1: number, x: number) => {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+// How skin-like a pixel is (0-1). Skin reads warm with red present and blue not
+// tiny; green-dominant pixels (the lime garment, lit foliage) score low so they
+// keep their green. A global white balance can't make this distinction, which
+// is why it desaturates real color and pushes skin cool.
+function skinWeight(r: number, g: number, b: number): number {
+  const wRed = smoothstep(70, 120, r); // exclude dark shadow
+  const wBlue = smoothstep(50, 85, b); // exclude low-blue greens
+  const wGreenDom = 1 - smoothstep(8, 22, g - r); // exclude green-dominant objects
+  return wRed * wBlue * wGreenDom;
+}
+
+// Skin-targeted green-cast reduction. For skin-like pixels whose green sits
+// above the red/blue midpoint (the olive signature), pull green down toward
+// that midpoint scaled by `strength`. Only green is lowered, never red/blue, so
+// corrected skin warms toward R>G>B instead of swinging toward magenta/cool the
+// way gray-world white balance does. Everything non-skin is left alone.
+async function reduceSkinGreen(photo: Buffer, strength: number): Promise<Buffer> {
+  const { data, info } = await sharp(photo).raw().toBuffer({ resolveWithObject: true });
+  const ch = info.channels;
+  const out = Buffer.from(data);
+  for (let i = 0; i < data.length; i += ch) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const target = (r + b) / 2;
+    if (g <= target) continue;
+    const w = skinWeight(r, g, b);
+    if (w <= 0) continue;
+    out[i + 1] = Math.round(g - strength * w * (g - target));
+  }
+  return sharp(out, { raw: { width: info.width, height: info.height, channels: ch } })
+    .png()
+    .toBuffer();
 }
 
 async function renderFrame(
@@ -88,7 +115,7 @@ async function renderFrame(
   matColor: string,
   crop: CropRect | null,
   scale: number,
-  whiteBalance: boolean,
+  skinCorrect: number,
 ): Promise<Buffer> {
   const base = FORMATS[format];
   const canvasWidth = Math.round(base.canvasWidth * scale);
@@ -103,11 +130,10 @@ async function renderFrame(
     .png()
     .toBuffer();
 
-  // White-balance the photo content before it gets the rounded mask, so the mat
-  // and transparent corners never skew the channel means.
-  if (whiteBalance) {
-    const gains = await grayWorldGains(cardBuffer);
-    cardBuffer = await sharp(cardBuffer).linear(gains, [0, 0, 0]).png().toBuffer();
+  // Correct the skin cast before the rounded mask, so transparent corners and
+  // the mat never enter the per-pixel test.
+  if (skinCorrect > 0) {
+    cardBuffer = await reduceSkinGreen(cardBuffer, skinCorrect);
   }
 
   if (cornerRadius > 0) {
@@ -251,11 +277,11 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
   const dither = options?.dither ?? HOUSE_STYLE.dither;
   const colors = options?.colors ?? HOUSE_STYLE.colors;
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
-  const whiteBalance = options?.whiteBalance ?? HOUSE_STYLE.whiteBalance;
+  const skinCorrect = clamp(options?.skinCorrect ?? HOUSE_STYLE.skinCorrect, 0, 1);
   const crops = options?.crops ?? [];
 
   const frames = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, whiteBalance)),
+    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, skinCorrect)),
   );
 
   // sharp 0.35's `colours` option routes through a broken colours->bitdepth
