@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-ARQ GIF Maker turns product photos into branded GIF cards for email delivery.
+Unterwaschine turns product photos into branded GIF cards for email delivery.
 Output file size is a first-class constraint. We need a stack that is simple to
 run locally for non-technical handoff and deploys cleanly.
 

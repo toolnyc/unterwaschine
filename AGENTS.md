@@ -1,4 +1,4 @@
-# ARQ GIF Maker
+# Unterwaschine
 
 A small web application for non-technical users to ingest product photos and output branded GIFs matching ARQ's defined visual style. GIFs are primarily for email delivery, so file size is a first-class concern.
 

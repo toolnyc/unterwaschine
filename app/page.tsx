@@ -2,15 +2,211 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const PALETTE: { name: string; hex: string }[] = [
+  { name: "Cotton", hex: "#F5E4B2" },
+  { name: "Slipper", hex: "#CDBABA" },
+  { name: "Chartreuse", hex: "#C9A835" },
+  { name: "Jean", hex: "#7A93A5" },
+  { name: "Gym", hex: "#A2A490" },
+  { name: "Cadmium", hex: "#D4502C" },
+  { name: "Burgundy", hex: "#5E1E2E" },
+  { name: "Black", hex: "#111111" },
+];
+
+const DEFAULT_MAT = PALETTE[0].hex;
+
+type OutputFormat = "card" | "story";
+type CropRect = { left: number; top: number; width: number; height: number };
+
+// Full output canvas per format (used for the displayed pixel size).
+const CANVAS_DIMS: Record<OutputFormat, { w: number; h: number }> = {
+  card: { w: 1560, h: 2240 },
+  story: { w: 1080, h: 1920 },
+};
+
+// Visible photo area (used for the crop frame aspect ratio).
+const OUTPUT_DIMS: Record<OutputFormat, { w: number; h: number }> = {
+  card: { w: 1440, h: 2120 },
+  story: { w: 1080, h: 1920 },
+};
+
+const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+function CropEditor({
+  file,
+  aspect,
+  initial,
+  onConfirm,
+  onClose,
+}: {
+  file: File;
+  aspect: number;
+  initial: CropRect | null;
+  onConfirm: (crop: CropRect) => void;
+  onClose: () => void;
+}) {
+  const FRAME_W = 300;
+  const FRAME_H = Math.round(FRAME_W / aspect);
+
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const [scale, setScale] = useState(1);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  const drag = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+
+  const baseScale = nat ? Math.max(FRAME_W / nat.w, FRAME_H / nat.h) : 1;
+
+  function constrain(nextTx: number, nextTy: number, s: number) {
+    if (!nat) return { tx: nextTx, ty: nextTy };
+    const dispW = nat.w * baseScale * s;
+    const dispH = nat.h * baseScale * s;
+    return {
+      tx: clamp(nextTx, FRAME_W - dispW, 0),
+      ty: clamp(nextTy, FRAME_H - dispH, 0),
+    };
+  }
+
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      const n = { w: img.naturalWidth, h: img.naturalHeight };
+      setNat(n);
+      const base = Math.max(FRAME_W / n.w, FRAME_H / n.h);
+      if (initial) {
+        const s = clamp(FRAME_W / (initial.width * base), 1, 4);
+        const eff = base * s;
+        const c = (() => {
+          const dispW = n.w * eff;
+          const dispH = n.h * eff;
+          return {
+            tx: clamp(-initial.left * eff, FRAME_W - dispW, 0),
+            ty: clamp(-initial.top * eff, FRAME_H - dispH, 0),
+          };
+        })();
+        setScale(s);
+        setTx(c.tx);
+        setTy(c.ty);
+      } else {
+        const dispW = n.w * base;
+        const dispH = n.h * base;
+        setScale(1);
+        setTx((FRAME_W - dispW) / 2);
+        setTy((FRAME_H - dispH) / 2);
+      }
+    };
+    img.src = url;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  function onPointerDown(e: React.PointerEvent) {
+    drag.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    if (!drag.current) return;
+    const dx = e.clientX - drag.current.x;
+    const dy = e.clientY - drag.current.y;
+    drag.current = { x: e.clientX, y: e.clientY };
+    const c = constrain(tx + dx, ty + dy, scale);
+    setTx(c.tx);
+    setTy(c.ty);
+  }
+  function onPointerUp() {
+    drag.current = null;
+  }
+
+  function onZoom(e: React.ChangeEvent<HTMLInputElement>) {
+    const s = Number(e.target.value);
+    const c = constrain(tx, ty, s);
+    setScale(s);
+    setTx(c.tx);
+    setTy(c.ty);
+  }
+
+  function confirm() {
+    if (!nat) return onClose();
+    const eff = baseScale * scale;
+    onConfirm({
+      left: Math.round(-tx / eff),
+      top: Math.round(-ty / eff),
+      width: Math.round(FRAME_W / eff),
+      height: Math.round(FRAME_H / eff),
+    });
+  }
+
+  const dispW = nat ? nat.w * baseScale * scale : FRAME_W;
+  const dispH = nat ? nat.h * baseScale * scale : FRAME_H;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <p className="controls-label">Crop — drag to position, slider to zoom</p>
+        <div
+          className="crop-frame"
+          style={{ width: FRAME_W, height: FRAME_H }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={file.name}
+            draggable={false}
+            style={{
+              position: "absolute",
+              left: tx,
+              top: ty,
+              width: dispW,
+              height: dispH,
+              maxWidth: "none",
+            }}
+          />
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={4}
+          step={0.01}
+          value={scale}
+          onChange={onZoom}
+          className="crop-zoom"
+        />
+        <div className="modal-actions">
+          <button className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button onClick={confirm}>Apply crop</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
+  const [format, setFormat] = useState<OutputFormat>("card");
+  const [matColor, setMatColor] = useState(DEFAULT_MAT);
+  const [frameSeconds, setFrameSeconds] = useState(0.7);
+  const [dither, setDither] = useState(1);
+  const [colors, setColors] = useState(256);
+  const [scale, setScale] = useState(0.5);
+  const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
+  const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dragIndex = useRef<number | null>(null);
 
   const thumbs = useMemo(
-    () => files.map((f) => ({ url: URL.createObjectURL(f), name: f.name })),
+    () => files.map((f) => ({ file: f, url: URL.createObjectURL(f), name: f.name })),
     [files],
   );
 
@@ -18,10 +214,46 @@ export default function Home() {
     return () => thumbs.forEach((t) => URL.revokeObjectURL(t.url));
   }, [thumbs]);
 
+  const dims = OUTPUT_DIMS[format];
+  const canvas = CANVAS_DIMS[format];
+  const aspect = dims.w / dims.h;
+  const showMat = format === "card";
+
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(e.target.files ?? []));
+    setCrops(new Map());
     setGifUrl(null);
     setError(null);
+  }
+
+  function onDragStart(index: number) {
+    dragIndex.current = index;
+  }
+
+  function onDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault();
+    const from = dragIndex.current;
+    if (from === null || from === index) return;
+    setFiles((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(index, 0, moved);
+      return next;
+    });
+    dragIndex.current = index;
+  }
+
+  function onDragEnd() {
+    dragIndex.current = null;
+  }
+
+  function applyCrop(file: File, crop: CropRect) {
+    setCrops((prev) => {
+      const next = new Map(prev);
+      next.set(file, crop);
+      return next;
+    });
+    setEditing(null);
   }
 
   async function generate() {
@@ -30,7 +262,16 @@ export default function Home() {
     setGifUrl(null);
     try {
       const body = new FormData();
-      files.forEach((f) => body.append("photos", f));
+      files.forEach((f) => {
+        body.append("photos", f);
+        body.append("crops", JSON.stringify(crops.get(f) ?? null));
+      });
+      body.append("format", format);
+      body.append("matColor", matColor);
+      body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
+      body.append("dither", String(dither));
+      body.append("colors", String(colors));
+      body.append("scale", String(scale));
       const res = await fetch("/api/render", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -45,10 +286,12 @@ export default function Home() {
     }
   }
 
+  const hexValid = HEX_RE.test(matColor);
+
   return (
     <main>
-      <h1>ARQ GIF Maker</h1>
-      <p className="subtitle">Upload product photos to build a branded GIF card.</p>
+      <h1>Unterwaschine</h1>
+      <p className="subtitle">v1.0</p>
 
       <div className="dropzone" onClick={() => inputRef.current?.click()}>
         <input
@@ -59,19 +302,151 @@ export default function Home() {
           hidden
           onChange={onPick}
         />
-        <p>{files.length ? `${files.length} photo(s) selected` : "Click to choose photos"}</p>
+        <p>{files.length ? `${files.length} photo(s) selected` : "Give me your underwear."}</p>
       </div>
 
       {thumbs.length > 0 && (
         <ul className="thumbs">
-          {thumbs.map((t) => (
-            <li key={t.url}>
+          {thumbs.map((t, i) => (
+            <li
+              key={t.url}
+              className="thumb-item"
+              draggable
+              onDragStart={() => onDragStart(i)}
+              onDragOver={(e) => onDragOver(e, i)}
+              onDragEnd={onDragEnd}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={t.url} alt={t.name} />
+              <span className="thumb-index">{i + 1}</span>
+              <button
+                type="button"
+                className="thumb-crop"
+                onClick={() => setEditing(t.file)}
+                title="Crop"
+              >
+                {crops.has(t.file) ? "Cropped" : "Crop"}
+              </button>
             </li>
           ))}
         </ul>
       )}
+
+      <div className="controls">
+        <p className="controls-label">Output format</p>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            aria-pressed={format === "card"}
+            onClick={() => setFormat("card")}
+          >
+            ARQ card
+          </button>
+          <button
+            className="seg-btn"
+            aria-pressed={format === "story"}
+            onClick={() => setFormat("story")}
+          >
+            IG story
+          </button>
+        </div>
+      </div>
+
+      {showMat && (
+        <div className="controls">
+          <p className="controls-label">Background color</p>
+          <ul className="palette">
+            {PALETTE.map((swatch) => (
+              <li key={swatch.hex}>
+                <button
+                  className="palette-swatch"
+                  style={{ background: swatch.hex }}
+                  aria-label={swatch.name}
+                  aria-pressed={matColor.toLowerCase() === swatch.hex.toLowerCase()}
+                  onClick={() => setMatColor(swatch.hex)}
+                  title={swatch.name}
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="hex-row">
+            <span className="hex-preview" style={{ background: hexValid ? matColor : "#fff" }} />
+            <input
+              className="hex-input"
+              type="text"
+              value={matColor}
+              spellCheck={false}
+              aria-invalid={!hexValid}
+              onChange={(e) => {
+                const v = e.target.value;
+                setMatColor(v.startsWith("#") ? v : `#${v.replace(/#/g, "")}`);
+              }}
+              placeholder="#F5E4B2"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="controls">
+        <p className="controls-label">Frame duration (seconds)</p>
+        <input
+          className="num-input"
+          type="number"
+          min={0.1}
+          step={0.1}
+          value={frameSeconds}
+          onChange={(e) => setFrameSeconds(Math.max(0.1, Number(e.target.value) || 0.1))}
+        />
+      </div>
+
+      <div className="controls">
+        <p className="controls-label">Compression</p>
+        <div className="field">
+          <label htmlFor="scale">
+            Output size — {Math.round(canvas.w * scale)}×{Math.round(canvas.h * scale)}px (biggest
+            effect on file size)
+          </label>
+          <select
+            id="scale"
+            className="num-input"
+            value={scale}
+            onChange={(e) => setScale(Number(e.target.value))}
+          >
+            <option value={1}>Full (100%)</option>
+            <option value={0.75}>Large (75%)</option>
+            <option value={0.5}>Email (50%)</option>
+            <option value={0.35}>Small (35%)</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="dither">
+            Dithering — {dither.toFixed(1)} (lower = fewer dots; mainly affects look)
+          </label>
+          <input
+            id="dither"
+            type="range"
+            min={0}
+            max={1}
+            step={0.1}
+            value={dither}
+            onChange={(e) => setDither(Number(e.target.value))}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="colors">Colors</label>
+          <select
+            id="colors"
+            className="num-input"
+            value={colors}
+            onChange={(e) => setColors(Number(e.target.value))}
+          >
+            <option value={256}>256 (best quality)</option>
+            <option value={128}>128</option>
+            <option value={64}>64</option>
+            <option value={32}>32 (smallest file)</option>
+          </select>
+        </div>
+      </div>
 
       <button onClick={generate} disabled={busy || files.length === 0}>
         {busy ? "Generating…" : "Generate GIF"}
@@ -84,9 +459,19 @@ export default function Home() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={gifUrl} alt="Generated ARQ GIF card" />
           <a href={gifUrl} download="arq.gif">
-            <button>Download GIF</button>
+            <button>Unterwäsche!</button>
           </a>
         </div>
+      )}
+
+      {editing && (
+        <CropEditor
+          file={editing}
+          aspect={aspect}
+          initial={crops.get(editing) ?? null}
+          onConfirm={(crop) => applyCrop(editing, crop)}
+          onClose={() => setEditing(null)}
+        />
       )}
     </main>
   );

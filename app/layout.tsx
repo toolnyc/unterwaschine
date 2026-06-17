@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ARQ GIF Maker",
-  description: "Turn product photos into branded ARQ GIF cards.",
+  title: "Unterwaschine",
+  description: "Turn your underwear into a GIF!.",
 };
 
 export default function RootLayout({
