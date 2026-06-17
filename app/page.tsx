@@ -256,16 +256,41 @@ export default function Home() {
     setEditing(null);
   }
 
+  async function compressPhoto(file: File): Promise<Blob> {
+    const MAX_PX = 2400;
+    const QUALITY = 0.88;
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.round(img.naturalWidth * scale);
+        const h = Math.round(img.naturalHeight * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Canvas unavailable"));
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Compression failed")), "image/jpeg", QUALITY);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+      img.src = url;
+    });
+  }
+
   async function generate() {
     setBusy(true);
     setError(null);
     setGifUrl(null);
     try {
       const body = new FormData();
-      files.forEach((f) => {
-        body.append("photos", f);
+      await Promise.all(files.map(async (f) => {
+        const compressed = await compressPhoto(f);
+        body.append("photos", compressed, f.name.replace(/\.[^.]+$/, ".jpg"));
         body.append("crops", JSON.stringify(crops.get(f) ?? null));
-      });
+      }));
       body.append("format", format);
       body.append("matColor", matColor);
       body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
