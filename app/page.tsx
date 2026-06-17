@@ -445,7 +445,8 @@ export default function Home() {
         </div>
         <div className="field">
           <label htmlFor="dither">
-            Dithering — {dither.toFixed(1)} (lower = fewer dots; mainly affects look)
+            Dithering — {dither.toFixed(1)} (lower = cleaner, smoother skin; higher = grainier
+            but smoother gradients)
           </label>
           <input
             id="dither"
