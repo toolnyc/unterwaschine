@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. The GIF *encoding/quantization* decision below (sharp's GIF encoder)
+is superseded by ADR 0002 (image-q + gifenc); the Next.js/Vercel/sharp-for-
+compositing stack still stands.
 
 ## Context
 

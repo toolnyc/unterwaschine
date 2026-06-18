@@ -15,6 +15,9 @@ const PALETTE: { name: string; hex: string }[] = [
 
 const DEFAULT_MAT = PALETTE[0].hex;
 
+// Cycled in the Generate button while a render is in flight.
+const BUSY_MESSAGES = ["Creating POs", "Ship-bobbing", "Making a WRO", "Texting Sarah", "Calling Vince"];
+
 type OutputFormat = "card" | "story";
 type CropRect = { left: number; top: number; width: number; height: number };
 
@@ -200,6 +203,7 @@ export default function Home() {
   const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyMsg, setBusyMsg] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragIndex = useRef<number | null>(null);
@@ -212,6 +216,14 @@ export default function Home() {
   useEffect(() => {
     return () => thumbs.forEach((t) => URL.revokeObjectURL(t.url));
   }, [thumbs]);
+
+  useEffect(() => {
+    if (!busy) return;
+    const id = setInterval(() => {
+      setBusyMsg((i) => (i + 1) % BUSY_MESSAGES.length);
+    }, 1400);
+    return () => clearInterval(id);
+  }, [busy]);
 
   const dims = OUTPUT_DIMS[format];
   const canvas = CANVAS_DIMS[format];
@@ -306,6 +318,7 @@ export default function Home() {
 
   async function generate() {
     setBusy(true);
+    setBusyMsg(0);
     setError(null);
     setGifUrl(null);
     try {
@@ -499,7 +512,26 @@ export default function Home() {
       </div>
 
       <button onClick={generate} disabled={busy || files.length === 0}>
-        {busy ? "Generating…" : "Generate GIF"}
+        {busy ? (
+          // All phrases share one grid cell, so the button sizes to the widest
+          // and never jumps width as the visible message cycles.
+          <span style={{ display: "grid", placeItems: "center" }}>
+            {BUSY_MESSAGES.map((msg, i) => (
+              <span
+                key={msg}
+                style={{
+                  gridArea: "1 / 1",
+                  whiteSpace: "nowrap",
+                  visibility: i === busyMsg ? "visible" : "hidden",
+                }}
+              >
+                {msg}…
+              </span>
+            ))}
+          </span>
+        ) : (
+          "Generate GIF"
+        )}
       </button>
 
       {error && <p className="error">{error}</p>}

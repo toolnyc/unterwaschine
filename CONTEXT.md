@@ -18,7 +18,7 @@ A browser-based tool for non-technical users at ARQ (a lingerie/apparel brand) t
 
 **Corner radius** — the rounded-corner clipping applied to the GIF card. Large by default (~80–100px on a 1560x2240 canvas). User-adjustable within a constrained range.
 
-**Compression** — settings that trade visual quality for smaller file size: color palette depth (2–256 colors), dithering, and output scale. Exposed to the user as two sliders: "Quality" and "Size" (or similar plain-language labels).
+**Compression** — settings that trade visual quality for smaller file size. Each frame is quantized to its own local palette with a perceptual clustering quantizer (image-q wuquant), which avoids the color casts a naive palette puts on skin. User-facing controls are **Output size** (the biggest lever) and **Colors** (2–256). Dithering and denoise are baked in (not exposed), since the quantizer makes them visually moot. See `docs/adr/0002-gif-quantization.md`.
 
 ## Output spec (house style)
 
@@ -36,8 +36,8 @@ A browser-based tool for non-technical users at ARQ (a lingerie/apparel brand) t
 - Images (upload, remove, reorder)
 - Frame hold duration
 - Corner radius (within a bounded range, e.g. 40–150px)
-- Output quality / compression level
-- Output scale (e.g. full size vs. half size for smaller file)
+- Colors (palette size, 2–256)
+- Output size (e.g. full size vs. email size for a smaller file)
 
 ## What users cannot change (baked-in style)
 
