@@ -194,10 +194,8 @@ export default function Home() {
   const [format, setFormat] = useState<OutputFormat>("card");
   const [matColor, setMatColor] = useState(DEFAULT_MAT);
   const [frameSeconds, setFrameSeconds] = useState(0.7);
-  const [dither, setDither] = useState(0.5);
   const [colors, setColors] = useState(256);
   const [scale, setScale] = useState(0.5);
-  const [smoothing, setSmoothing] = useState(0.6);
   const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
   const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
@@ -336,10 +334,8 @@ export default function Home() {
       body.append("format", format);
       body.append("matColor", matColor);
       body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
-      body.append("dither", String(dither));
       body.append("colors", String(colors));
       body.append("scale", String(scale));
-      body.append("smoothing", String(smoothing));
       const res = await fetch("/api/render", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -487,21 +483,6 @@ export default function Home() {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="dither">
-            Dithering — {dither.toFixed(1)} · left = flatter color, can band · right = smoother
-            gradients but more grain
-          </label>
-          <input
-            id="dither"
-            type="range"
-            min={0}
-            max={1}
-            step={0.1}
-            value={dither}
-            onChange={(e) => setDither(Number(e.target.value))}
-          />
-        </div>
-        <div className="field">
           <label htmlFor="colors">Colors</label>
           <select
             id="colors"
@@ -514,21 +495,6 @@ export default function Home() {
             <option value={64}>64</option>
             <option value={32}>32 (smallest file)</option>
           </select>
-        </div>
-        <div className="field">
-          <label htmlFor="smoothing">
-            Noise reduction — {smoothing.toFixed(1)} · left = sharper detail but more speckle ·
-            right = softer, cleaner skin
-          </label>
-          <input
-            id="smoothing"
-            type="range"
-            min={0}
-            max={1.5}
-            step={0.1}
-            value={smoothing}
-            onChange={(e) => setSmoothing(Number(e.target.value))}
-          />
         </div>
       </div>
 

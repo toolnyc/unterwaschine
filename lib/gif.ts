@@ -51,10 +51,10 @@ export const HOUSE_STYLE = {
   dither: 0.5,
   colors: 256,
   loop: 0,
-  // Gaussian blur sigma applied to the photo just before quantization. Removes
-  // the fine sensor noise that dithering would otherwise amplify into visible
-  // speckle on skin and flat garments. 0 (or <0.3) disables it.
-  smoothing: 0.6,
+  // Pre-quantization Gaussian blur. Was needed to stop the old libvips dither
+  // from amplifying sensor noise into speckle; wuquant doesn't speckle, so it's
+  // off by default (it only softened detail). Still honored as an option.
+  smoothing: 0,
 } as const;
 
 export type CropRect = { left: number; top: number; width: number; height: number };
