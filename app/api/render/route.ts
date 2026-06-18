@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     dither: parseNumber(formData.get("dither")),
     colors: parseNumber(formData.get("colors")),
     scale: parseNumber(formData.get("scale")),
-    skinCorrect: parseNumber(formData.get("skinCorrect")),
+    smoothing: parseNumber(formData.get("smoothing")),
     crops: crops.length === files.length ? crops : undefined,
   };
 

@@ -194,10 +194,10 @@ export default function Home() {
   const [format, setFormat] = useState<OutputFormat>("card");
   const [matColor, setMatColor] = useState(DEFAULT_MAT);
   const [frameSeconds, setFrameSeconds] = useState(0.7);
-  const [dither, setDither] = useState(1);
+  const [dither, setDither] = useState(0.5);
   const [colors, setColors] = useState(256);
   const [scale, setScale] = useState(0.5);
-  const [skinCorrect, setSkinCorrect] = useState(0.6);
+  const [smoothing, setSmoothing] = useState(0.6);
   const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
   const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
@@ -339,7 +339,7 @@ export default function Home() {
       body.append("dither", String(dither));
       body.append("colors", String(colors));
       body.append("scale", String(scale));
-      body.append("skinCorrect", String(skinCorrect));
+      body.append("smoothing", String(smoothing));
       const res = await fetch("/api/render", { method: "POST", body });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -488,8 +488,8 @@ export default function Home() {
         </div>
         <div className="field">
           <label htmlFor="dither">
-            Dithering — {dither.toFixed(1)} (lower = cleaner, smoother skin; higher = grainier
-            but smoother gradients)
+            Dithering — {dither.toFixed(1)} · left = flatter color, can band · right = smoother
+            gradients but more grain
           </label>
           <input
             id="dither"
@@ -516,18 +516,18 @@ export default function Home() {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="skinCorrect">
-            Skin color correction — {Math.round(skinCorrect * 100)}% (warms olive/green
-            skin from shade light; leaves the garment and foliage green)
+          <label htmlFor="smoothing">
+            Noise reduction — {smoothing.toFixed(1)} · left = sharper detail but more speckle ·
+            right = softer, cleaner skin
           </label>
           <input
-            id="skinCorrect"
+            id="smoothing"
             type="range"
             min={0}
-            max={1}
-            step={0.05}
-            value={skinCorrect}
-            onChange={(e) => setSkinCorrect(Number(e.target.value))}
+            max={1.5}
+            step={0.1}
+            value={smoothing}
+            onChange={(e) => setSmoothing(Number(e.target.value))}
           />
         </div>
       </div>

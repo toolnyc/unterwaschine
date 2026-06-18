@@ -22,15 +22,17 @@ export const FORMATS = {
 export const HOUSE_STYLE = {
   matColor: "#F5E4B2",
   frameHoldMs: 700,
-  dither: 1,
+  // Moderate error-diffusion: enough to keep gradients smooth, low enough that
+  // it doesn't stipple skin with speckle the way full dithering does.
+  dither: 0.5,
   colors: 256,
   loop: 0,
   // Max palette-search effort; quality matters more than encode time here.
   effort: 10,
-  // Strength (0-1) of the skin green-cast correction. Open shade and green
-  // bounce light leave an olive tint on skin; this pulls it back toward warm
-  // without touching the green garment or foliage. 0 disables it.
-  skinCorrect: 0.6,
+  // Gaussian blur sigma applied to the photo just before quantization. Removes
+  // the fine sensor noise that dithering would otherwise amplify into visible
+  // speckle on skin and flat garments. 0 (or <0.3) disables it.
+  smoothing: 0.6,
 } as const;
 
 export type CropRect = { left: number; top: number; width: number; height: number };
@@ -42,7 +44,7 @@ export type RenderOptions = {
   dither?: number;
   colors?: number;
   scale?: number;
-  skinCorrect?: number;
+  smoothing?: number;
   crops?: (CropRect | null)[];
 };
 
@@ -69,53 +71,13 @@ async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sh
   return img.extract({ left, top, width, height });
 }
 
-const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
-};
-
-// How skin-like a pixel is (0-1). Skin reads warm with red present and blue not
-// tiny; green-dominant pixels (the lime garment, lit foliage) score low so they
-// keep their green. A global white balance can't make this distinction, which
-// is why it desaturates real color and pushes skin cool.
-function skinWeight(r: number, g: number, b: number): number {
-  const wRed = smoothstep(70, 120, r); // exclude dark shadow
-  const wBlue = smoothstep(50, 85, b); // exclude low-blue greens
-  const wGreenDom = 1 - smoothstep(8, 22, g - r); // exclude green-dominant objects
-  return wRed * wBlue * wGreenDom;
-}
-
-// Skin-targeted green-cast reduction. For skin-like pixels whose green sits
-// above the red/blue midpoint (the olive signature), pull green down toward
-// that midpoint scaled by `strength`. Only green is lowered, never red/blue, so
-// corrected skin warms toward R>G>B instead of swinging toward magenta/cool the
-// way gray-world white balance does. Everything non-skin is left alone.
-async function reduceSkinGreen(photo: Buffer, strength: number): Promise<Buffer> {
-  const { data, info } = await sharp(photo).raw().toBuffer({ resolveWithObject: true });
-  const ch = info.channels;
-  const out = Buffer.from(data);
-  for (let i = 0; i < data.length; i += ch) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const target = (r + b) / 2;
-    if (g <= target) continue;
-    const w = skinWeight(r, g, b);
-    if (w <= 0) continue;
-    out[i + 1] = Math.round(g - strength * w * (g - target));
-  }
-  return sharp(out, { raw: { width: info.width, height: info.height, channels: ch } })
-    .png()
-    .toBuffer();
-}
-
 async function renderFrame(
   photo: Buffer,
   format: OutputFormat,
   matColor: string,
   crop: CropRect | null,
   scale: number,
-  skinCorrect: number,
+  smoothing: number,
 ): Promise<Buffer> {
   const base = FORMATS[format];
   const canvasWidth = Math.round(base.canvasWidth * scale);
@@ -130,10 +92,11 @@ async function renderFrame(
     .png()
     .toBuffer();
 
-  // Correct the skin cast before the rounded mask, so transparent corners and
-  // the mat never enter the per-pixel test.
-  if (skinCorrect > 0) {
-    cardBuffer = await reduceSkinGreen(cardBuffer, skinCorrect);
+  // Denoise before quantization so dithering doesn't amplify sensor noise into
+  // speckle. Applied to the photo only, before the rounded mask, so the mat
+  // edge and corners stay crisp. (sharp's blur needs sigma >= 0.3.)
+  if (smoothing >= 0.3) {
+    cardBuffer = await sharp(cardBuffer).blur(smoothing).png().toBuffer();
   }
 
   if (cornerRadius > 0) {
@@ -277,11 +240,11 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
   const dither = options?.dither ?? HOUSE_STYLE.dither;
   const colors = options?.colors ?? HOUSE_STYLE.colors;
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
-  const skinCorrect = clamp(options?.skinCorrect ?? HOUSE_STYLE.skinCorrect, 0, 1);
+  const smoothing = clamp(options?.smoothing ?? HOUSE_STYLE.smoothing, 0, 3);
   const crops = options?.crops ?? [];
 
   const frames = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, skinCorrect)),
+    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing)),
   );
 
   // sharp 0.35's `colours` option routes through a broken colours->bitdepth
