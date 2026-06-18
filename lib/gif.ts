@@ -1,4 +1,12 @@
 import sharp from "sharp";
+import * as gifencNamespace from "gifenc";
+import { buildPalette, applyPalette, utils, type ImageQuantization } from "image-q";
+
+// gifenc ships a CJS build whose exports land under `default` via Node's interop
+// but as named exports under bundlers; normalize so this works in both.
+const gifenc = ((gifencNamespace as { default?: typeof gifencNamespace }).default ??
+  gifencNamespace) as typeof gifencNamespace;
+const { GIFEncoder } = gifenc;
 
 export type OutputFormat = "card" | "story";
 
@@ -22,13 +30,12 @@ export const FORMATS = {
 export const HOUSE_STYLE = {
   matColor: "#F5E4B2",
   frameHoldMs: 700,
-  // Moderate error-diffusion: enough to keep gradients smooth, low enough that
-  // it doesn't stipple skin with speckle the way full dithering does.
+  // Dither toggle: >0 applies error diffusion, 0 disables it (flatter, can band).
+  // The quantizer is image-q's wuquant palette, which (unlike libvips here)
+  // does not bleed green palette entries into skin.
   dither: 0.5,
   colors: 256,
   loop: 0,
-  // Max palette-search effort; quality matters more than encode time here.
-  effort: 10,
   // Gaussian blur sigma applied to the photo just before quantization. Removes
   // the fine sensor noise that dithering would otherwise amplify into visible
   // speckle on skin and flat garments. 0 (or <0.3) disables it.
@@ -119,114 +126,68 @@ async function renderFrame(
     .toBuffer();
 }
 
-// A single-frame GIF parsed down to the bits we need to re-emit it as one
-// frame of an animation with its own local color table.
-type ParsedFrame = {
-  width: number;
-  height: number;
-  palette: Buffer;
-  paletteSize: number;
-  minCodeSize: number;
-  data: Buffer;
-};
+// Quantize one full-colour frame to a 256-entry palette with image-q's wuquant
+// (a proper clustering palette that, unlike the libvips path, does not assign
+// green palette entries to skin), optionally dithered, then return the indexed
+// bitmap + palette ready for gifenc to write as one animation frame.
+async function quantizeFrame(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  colors: number,
+  ditherMode: ImageQuantization,
+): Promise<{ index: Uint8Array; palette: number[][] }> {
+  const inPoints = utils.PointContainer.fromUint8Array(rgba, width, height);
+  const builtPalette = await buildPalette([inPoints], {
+    colorDistanceFormula: "euclidean-bt709",
+    paletteQuantization: "wuquant",
+    colors,
+  });
+  const outPoints = await applyPalette(inPoints, builtPalette, {
+    colorDistanceFormula: "euclidean-bt709",
+    imageQuantization: ditherMode,
+  });
+  const dithered = outPoints.toUint8Array();
 
-// Walk a single-frame GIF produced by sharp and pull out the screen size,
-// color table, and LZW image data. Indices in the data reference palette
-// positions, so the table moves from global to local unchanged.
-function parseSingleFrameGif(buf: Buffer): ParsedFrame {
-  let p = 6; // skip "GIF89a"
-  const width = buf.readUInt16LE(p);
-  const height = buf.readUInt16LE(p + 2);
-  const packed = buf[p + 4];
-  p += 7;
+  const paletteBytes = builtPalette.getPointContainer().toUint8Array();
+  const palette: number[][] = [];
+  const lookup = new Map<number, number>();
+  for (let i = 0; i < paletteBytes.length; i += 4) {
+    const r = paletteBytes[i];
+    const g = paletteBytes[i + 1];
+    const b = paletteBytes[i + 2];
+    lookup.set((r << 16) | (g << 8) | b, palette.length);
+    palette.push([r, g, b]);
+  }
 
-  const gctFlag = (packed & 0x80) !== 0;
-  const gctSize = gctFlag ? 2 << (packed & 0x07) : 0;
-  const gct = gctFlag ? buf.subarray(p, p + gctSize * 3) : null;
-  p += gctSize * 3;
-
-  while (p < buf.length) {
-    const block = buf[p];
-    if (block === 0x21) {
-      p += 2; // extension introducer + label
-      while (buf[p] !== 0) p += buf[p] + 1; // sub-blocks
-      p += 1; // terminator
-    } else if (block === 0x2c) {
-      const ipacked = buf[p + 9];
-      let q = p + 10;
-      const lctFlag = (ipacked & 0x80) !== 0;
-      const lctSize = lctFlag ? 2 << (ipacked & 0x07) : 0;
-      const lct = lctFlag ? buf.subarray(q, q + lctSize * 3) : null;
-      q += lctSize * 3;
-      const minCodeSize = buf[q];
-      q += 1;
-      const dataStart = q;
-      while (buf[q] !== 0) q += buf[q] + 1;
-      return {
-        width,
-        height,
-        palette: (lct ?? gct) as Buffer,
-        paletteSize: lctFlag ? lctSize : gctSize,
-        minCodeSize,
-        data: buf.subarray(dataStart, q),
-      };
-    } else {
-      break;
+  // Dithered pixels already equal palette colours, so the lookup is exact; the
+  // linear scan is only a defensive fallback for any unexpected miss.
+  const pixels = width * height;
+  const index = new Uint8Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    const r = dithered[i * 4];
+    const g = dithered[i * 4 + 1];
+    const b = dithered[i * 4 + 2];
+    let idx = lookup.get((r << 16) | (g << 8) | b);
+    if (idx === undefined) {
+      let best = 0;
+      let bestDist = Infinity;
+      for (let p = 0; p < palette.length; p++) {
+        const dr = palette[p][0] - r;
+        const dg = palette[p][1] - g;
+        const db = palette[p][2] - b;
+        const dist = dr * dr + dg * dg + db * db;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = p;
+        }
+      }
+      idx = best;
     }
+    index[i] = idx;
   }
 
-  throw new Error("Could not parse GIF frame.");
-}
-
-// Color-table size field s.t. 2^(field+1) == number of entries.
-const paletteSizeField = (entries: number) => Math.ceil(Math.log2(entries)) - 1;
-
-// Assemble independently-quantized single-frame GIFs into one animation where
-// each frame keeps its own optimal palette as a local color table. This avoids
-// the green/olive cast skin tones get when many photos share one global table.
-function muxAnimatedGif(singleGifs: Buffer[], frameHoldMs: number, loop: number): Buffer {
-  const first = parseSingleFrameGif(singleGifs[0]);
-  const out: Buffer[] = [];
-
-  out.push(Buffer.from("GIF89a"));
-  const lsd = Buffer.alloc(7);
-  lsd.writeUInt16LE(first.width, 0);
-  lsd.writeUInt16LE(first.height, 2);
-  out.push(lsd); // no global color table
-
-  out.push(
-    Buffer.from([
-      0x21, 0xff, 0x0b, 0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32,
-      0x2e, 0x30, 0x03, 0x01, loop & 0xff, (loop >> 8) & 0xff, 0x00,
-    ]),
-  );
-
-  const delayCs = Math.max(1, Math.round(frameHoldMs / 10));
-  for (const gif of singleGifs) {
-    const f = parseSingleFrameGif(gif);
-    out.push(
-      Buffer.from([0x21, 0xf9, 0x04, 0x04, delayCs & 0xff, (delayCs >> 8) & 0xff, 0x00, 0x00]),
-    );
-
-    const sizeField = paletteSizeField(f.paletteSize);
-    const id = Buffer.alloc(10);
-    id[0] = 0x2c;
-    id.writeUInt16LE(f.width, 5);
-    id.writeUInt16LE(f.height, 7);
-    id[9] = 0x80 | (sizeField & 0x07);
-    out.push(id);
-
-    const fullTable = Buffer.alloc((2 << sizeField) * 3);
-    f.palette.copy(fullTable);
-    out.push(fullTable);
-
-    out.push(Buffer.from([f.minCodeSize]));
-    out.push(Buffer.from(f.data));
-    out.push(Buffer.from([0x00]));
-  }
-
-  out.push(Buffer.from([0x3b]));
-  return Buffer.concat(out);
+  return { index, palette };
 }
 
 export async function renderGif(photos: Buffer[], options?: RenderOptions): Promise<Buffer> {
@@ -247,20 +208,33 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
     photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing)),
   );
 
-  // sharp 0.35's `colours` option routes through a broken colours->bitdepth
-  // conversion that only ever yields palettes of 2/4/16/256, so 32/64/128 all
-  // collapse to 16 colors and dense photos posterize with a green/olive cast.
-  // Set the libvips bitdepth directly to get the requested palette size.
-  const bitdepth = clamp(Math.ceil(Math.log2(clamp(colors, 2, 256))), 1, 8);
-  const singleGifs = await Promise.all(
-    frames.map((f) => {
-      const encoder = sharp(f).gif({ dither, effort: HOUSE_STYLE.effort });
-      (encoder as unknown as { options: { gifBitdepth: number } }).options.gifBitdepth = bitdepth;
-      return encoder.toBuffer();
-    }),
-  );
+  // image-q quantizes + dithers each frame to its own optimal palette, gifenc
+  // writes them as one looping animation with per-frame local color tables.
+  const paletteColors = clamp(Math.round(colors), 2, 256);
+  const ditherMode: ImageQuantization = dither > 0 ? "floyd-steinberg" : "nearest";
+  const delay = Math.max(10, Math.round(frameHoldMs));
 
-  if (singleGifs.length === 1) return singleGifs[0];
+  const gif = GIFEncoder();
+  for (let i = 0; i < frames.length; i++) {
+    const { data, info } = await sharp(frames[i])
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const rgba = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const { index, palette } = await quantizeFrame(
+      rgba,
+      info.width,
+      info.height,
+      paletteColors,
+      ditherMode,
+    );
+    gif.writeFrame(index, info.width, info.height, {
+      palette,
+      delay,
+      repeat: i === 0 ? HOUSE_STYLE.loop : undefined,
+    });
+  }
+  gif.finish();
 
-  return muxAnimatedGif(singleGifs, frameHoldMs, HOUSE_STYLE.loop);
+  return Buffer.from(gif.bytes());
 }
