@@ -2,11 +2,26 @@ import sharp from "sharp";
 import * as gifencNamespace from "gifenc";
 import { buildPalette, applyPalette, utils, type ImageQuantization } from "image-q";
 
-// gifenc ships a CJS build whose exports land under `default` via Node's interop
-// but as named exports under bundlers; normalize so this works in both.
-const gifenc = ((gifencNamespace as { default?: typeof gifencNamespace }).default ??
-  gifencNamespace) as typeof gifencNamespace;
-const { GIFEncoder } = gifenc;
+// gifenc's ESM build exposes the factory both as a named export AND as
+// `default` (which IS the function), while Node's CJS interop nests it under
+// `default.GIFEncoder`. Pick the first callable so this works in every bundler.
+type GIFEncoderFactory = (typeof gifencNamespace)["GIFEncoder"];
+function resolveGIFEncoder(): GIFEncoderFactory {
+  const ns = gifencNamespace as unknown as {
+    GIFEncoder?: unknown;
+    default?: { GIFEncoder?: unknown } | unknown;
+  };
+  const candidates: unknown[] = [
+    ns.GIFEncoder,
+    (ns.default as { GIFEncoder?: unknown } | undefined)?.GIFEncoder,
+    ns.default,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "function") return candidate as GIFEncoderFactory;
+  }
+  throw new Error("gifenc: GIFEncoder export not found");
+}
+const GIFEncoder = resolveGIFEncoder();
 
 export type OutputFormat = "card" | "story";
 
