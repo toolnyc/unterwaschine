@@ -202,6 +202,7 @@ export default function Home() {
   const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
   const [editing, setEditing] = useState<File | null>(null);
   const [gifUrl, setGifUrl] = useState<string | null>(null);
+  const [outputKind, setOutputKind] = useState<"gif" | "mp4">("gif");
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -321,6 +322,7 @@ export default function Home() {
     setBusyMsg(0);
     setError(null);
     setGifUrl(null);
+    const isStory = format === "story";
     try {
       // Vercel caps the function request body at 4.5MB; stay safely under it
       // (multipart overhead + other fields). Split the budget across photos so
@@ -355,6 +357,7 @@ export default function Home() {
         throw new Error(data.error ?? `Render failed (${res.status}).`);
       }
       const blob = await res.blob();
+      setOutputKind(isStory ? "mp4" : "gif");
       setGifUrl(URL.createObjectURL(blob));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -529,6 +532,8 @@ export default function Home() {
               </span>
             ))}
           </span>
+        ) : format === "story" ? (
+          "Generate MP4"
         ) : (
           "Generate GIF"
         )}
@@ -538,9 +543,13 @@ export default function Home() {
 
       {gifUrl && (
         <div className="result">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={gifUrl} alt="Generated ARQ GIF card" />
-          <a href={gifUrl} download="arq.gif">
+          {outputKind === "mp4" ? (
+            <video src={gifUrl} autoPlay loop muted playsInline controls />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={gifUrl} alt="Generated ARQ GIF card" />
+          )}
+          <a href={gifUrl} download={outputKind === "mp4" ? "arq.mp4" : "arq.gif"}>
             <button>Unterwäsche!</button>
           </a>
         </div>

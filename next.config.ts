@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["sharp"],
+  serverExternalPackages: ["sharp", "h264-mp4-encoder"],
   // sharp's libvips .so is dlopen'd at runtime, so file tracing misses it.
   // Force the linux-x64 native binaries into the serverless function bundle.
   outputFileTracingIncludes: {

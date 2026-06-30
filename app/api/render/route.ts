@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { renderGif, type CropRect, type OutputFormat, type RenderOptions } from "@/lib/gif";
+import { renderMp4 } from "@/lib/mp4";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,19 @@ export async function POST(request: Request) {
   );
 
   try {
+    // IG stories export as MP4 (far smaller than GIF at story resolution and
+    // what Instagram expects); the ARQ card stays a looping GIF.
+    if (format === "story") {
+      const mp4 = await renderMp4(photos, options);
+      return new NextResponse(new Uint8Array(mp4), {
+        status: 200,
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Disposition": 'inline; filename="arq.mp4"',
+        },
+      });
+    }
+
     const gif = await renderGif(photos, options);
     return new NextResponse(new Uint8Array(gif), {
       status: 200,
@@ -55,7 +69,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to render GIF.";
+    const message = err instanceof Error ? err.message : "Failed to render output.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

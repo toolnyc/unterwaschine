@@ -75,7 +75,7 @@ function roundedMask(width: number, height: number, radius: number): Buffer {
   return Buffer.from(svg);
 }
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sharp> {
   const img = sharp(photo, { failOn: "none" }).rotate();
@@ -93,7 +93,7 @@ async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sh
   return img.extract({ left, top, width, height });
 }
 
-async function renderFrame(
+export async function renderFrame(
   photo: Buffer,
   format: OutputFormat,
   matColor: string,
