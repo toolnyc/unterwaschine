@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import sharp from "sharp";
 import * as gifencNamespace from "gifenc";
 import { buildPalette, applyPalette, utils, type ImageQuantization } from "image-q";
@@ -23,13 +25,20 @@ function resolveGIFEncoder(): GIFEncoderFactory {
 }
 const GIFEncoder = resolveGIFEncoder();
 
-export type OutputFormat = "card" | "story";
+export type OutputFormat = "card" | "card45" | "story";
 
 export const FORMATS = {
   // ARQ house-style portrait card with cream mat and rounded corners.
   card: {
     canvasWidth: 1560,
     canvasHeight: 2240,
+    cornerRadius: 90,
+    matInset: 60,
+  },
+  // Same house-style card at a 4:5 feed aspect (1560x1950).
+  card45: {
+    canvasWidth: 1560,
+    canvasHeight: 1950,
     cornerRadius: 90,
     matInset: 60,
   },
@@ -68,7 +77,40 @@ export type RenderOptions = {
   scale?: number;
   smoothing?: number;
   crops?: (CropRect | null)[];
+  logoOverlay?: boolean;
 };
+
+// White ARQ logo overlay: 215px wide on a 1080px-wide canvas, and that width
+// ratio (215/1080) is held across every format and output size so the mark
+// never distorts. Horizontally centred, bottom edge resting on the vertical
+// centre of the frame. Read once and cached for the life of the process.
+const LOGO_WIDTH_RATIO = 215 / 1080;
+const LOGO_PATH = path.join(process.cwd(), "lib", "assets", "arq-logo-white.png");
+let logoPromise: Promise<Buffer> | null = null;
+function loadLogo(): Promise<Buffer> {
+  logoPromise ??= readFile(LOGO_PATH);
+  return logoPromise;
+}
+
+export type LogoLayer = { input: Buffer; left: number; top: number };
+
+// Resize the logo for this render's format/scale and compute where it sits on
+// the canvas: centred horizontally, bottom edge on the frame's midline.
+// Resizing by width only preserves the logo's aspect ratio.
+export async function prepareLogoLayer(format: OutputFormat, scale: number): Promise<LogoLayer> {
+  const base = FORMATS[format];
+  const canvasWidth = Math.round(base.canvasWidth * scale);
+  const canvasHeight = Math.round(base.canvasHeight * scale);
+  const logoWidth = Math.max(1, Math.round(canvasWidth * LOGO_WIDTH_RATIO));
+  const input = await sharp(await loadLogo()).resize({ width: logoWidth }).png().toBuffer();
+  const meta = await sharp(input).metadata();
+  const logoHeight = meta.height ?? logoWidth;
+  return {
+    input,
+    left: Math.round((canvasWidth - logoWidth) / 2),
+    top: Math.round(canvasHeight / 2 - logoHeight),
+  };
+}
 
 function roundedMask(width: number, height: number, radius: number): Buffer {
   const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}"/></svg>`;
@@ -100,6 +142,7 @@ export async function renderFrame(
   crop: CropRect | null,
   scale: number,
   smoothing: number,
+  logo: LogoLayer | null,
 ): Promise<Buffer> {
   const base = FORMATS[format];
   const canvasWidth = Math.round(base.canvasWidth * scale);
@@ -128,6 +171,9 @@ export async function renderFrame(
       .toBuffer();
   }
 
+  const layers: sharp.OverlayOptions[] = [{ input: cardBuffer, top: matInset, left: matInset }];
+  if (logo) layers.push(logo);
+
   return sharp({
     create: {
       width: canvasWidth,
@@ -136,7 +182,7 @@ export async function renderFrame(
       background: matColor,
     },
   })
-    .composite([{ input: cardBuffer, top: matInset, left: matInset }])
+    .composite(layers)
     .png()
     .toBuffer();
 }
@@ -218,9 +264,12 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
   const smoothing = clamp(options?.smoothing ?? HOUSE_STYLE.smoothing, 0, 3);
   const crops = options?.crops ?? [];
+  const logo = options?.logoOverlay ? await prepareLogoLayer(format, scale) : null;
 
   const frames = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing)),
+    photos.map((p, i) =>
+      renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing, logo),
+    ),
   );
 
   // image-q quantizes + dithers each frame to its own optimal palette, gifenc

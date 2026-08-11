@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { createH264MP4Encoder } from "h264-mp4-encoder";
-import { HOUSE_STYLE, clamp, renderFrame, type RenderOptions } from "./gif";
+import { HOUSE_STYLE, clamp, prepareLogoLayer, renderFrame, type RenderOptions } from "./gif";
 
 // H.264 quality: lower quantization = higher quality / larger file. Story
 // slideshows are mostly static frames (which compress to near-nothing as
@@ -23,9 +23,10 @@ export async function renderMp4(photos: Buffer[], options?: RenderOptions): Prom
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
   const smoothing = clamp(options?.smoothing ?? HOUSE_STYLE.smoothing, 0, 3);
   const crops = options?.crops ?? [];
+  const logo = options?.logoOverlay ? await prepareLogoLayer(format, scale) : null;
 
   const rendered = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing)),
+    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing, logo)),
   );
 
   const encoder = await createH264MP4Encoder();

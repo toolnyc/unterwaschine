@@ -18,7 +18,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Upload at least one photo." }, { status: 400 });
   }
 
-  const format = (formData.get("format") as string | null) === "story" ? "story" : "card";
+  const formatParam = formData.get("format") as string | null;
+  const format: OutputFormat =
+    formatParam === "story" || formatParam === "card45" ? formatParam : "card";
 
   const crops: (CropRect | null)[] = formData.getAll("crops").map((v) => {
     if (typeof v !== "string") return null;
@@ -32,8 +34,9 @@ export async function POST(request: Request) {
   });
 
   const options: RenderOptions = {
-    format: format as OutputFormat,
+    format,
     matColor: (formData.get("matColor") as string | null) ?? undefined,
+    logoOverlay: formData.get("logoOverlay") === "true",
     frameHoldMs: parseNumber(formData.get("frameHoldMs")),
     dither: parseNumber(formData.get("dither")),
     colors: parseNumber(formData.get("colors")),

@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
     "/api/render": [
       "./node_modules/@img/sharp-linux-x64/**/*",
       "./node_modules/@img/sharp-libvips-linux-x64/**/*",
+      // The white ARQ logo is read from disk at render time.
+      "./lib/assets/**/*",
     ],
   },
 };

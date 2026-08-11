@@ -18,18 +18,20 @@ const DEFAULT_MAT = PALETTE[0].hex;
 // Cycled in the Generate button while a render is in flight.
 const BUSY_MESSAGES = ["Creating POs", "Ship-bobbing", "Making a WRO", "Texting Sarah", "Calling Vince"];
 
-type OutputFormat = "card" | "story";
+type OutputFormat = "card" | "card45" | "story";
 type CropRect = { left: number; top: number; width: number; height: number };
 
 // Full output canvas per format (used for the displayed pixel size).
 const CANVAS_DIMS: Record<OutputFormat, { w: number; h: number }> = {
   card: { w: 1560, h: 2240 },
+  card45: { w: 1560, h: 1950 },
   story: { w: 1080, h: 1920 },
 };
 
 // Visible photo area (used for the crop frame aspect ratio).
 const OUTPUT_DIMS: Record<OutputFormat, { w: number; h: number }> = {
   card: { w: 1440, h: 2120 },
+  card45: { w: 1440, h: 1830 },
   story: { w: 1080, h: 1920 },
 };
 
@@ -196,6 +198,7 @@ export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [format, setFormat] = useState<OutputFormat>("card");
   const [matColor, setMatColor] = useState(DEFAULT_MAT);
+  const [logoOverlay, setLogoOverlay] = useState(false);
   const [frameSeconds, setFrameSeconds] = useState(0.7);
   const [colors, setColors] = useState(256);
   const [scale, setScale] = useState(0.5);
@@ -229,7 +232,7 @@ export default function Home() {
   const dims = OUTPUT_DIMS[format];
   const canvas = CANVAS_DIMS[format];
   const aspect = dims.w / dims.h;
-  const showMat = format === "card";
+  const showMat = format !== "story";
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(e.target.files ?? []));
@@ -348,6 +351,7 @@ export default function Home() {
       });
       body.append("format", format);
       body.append("matColor", matColor);
+      body.append("logoOverlay", String(logoOverlay));
       body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
       body.append("colors", String(colors));
       body.append("scale", String(scale));
@@ -424,12 +428,31 @@ export default function Home() {
           </button>
           <button
             className="seg-btn"
+            aria-pressed={format === "card45"}
+            onClick={() => setFormat("card45")}
+          >
+            ARQ card 4:5
+          </button>
+          <button
+            className="seg-btn"
             aria-pressed={format === "story"}
             onClick={() => setFormat("story")}
           >
             IG story
           </button>
         </div>
+      </div>
+
+      <div className="controls">
+        <p className="controls-label">Logo overlay</p>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={logoOverlay}
+            onChange={(e) => setLogoOverlay(e.target.checked)}
+          />
+          White ARQ logo across every frame
+        </label>
       </div>
 
       {showMat && (
