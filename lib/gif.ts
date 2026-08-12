@@ -80,11 +80,11 @@ export type RenderOptions = {
   logoOverlay?: boolean;
 };
 
-// White ARQ logo overlay: 215px wide on a 1080px-wide canvas, and that width
-// ratio (215/1080) is held across every format and output size so the mark
+// White ARQ logo overlay: 472px wide on a 1080px-wide canvas, and that width
+// ratio (472/1080) is held across every format and output size so the mark
 // never distorts. Horizontally centred, bottom edge resting on the vertical
 // centre of the frame. Read once and cached for the life of the process.
-const LOGO_WIDTH_RATIO = 215 / 1080;
+const LOGO_WIDTH_RATIO = 472 / 1080;
 const LOGO_PATH = path.join(process.cwd(), "lib", "assets", "arq-logo-white.png");
 let logoPromise: Promise<Buffer> | null = null;
 function loadLogo(): Promise<Buffer> {

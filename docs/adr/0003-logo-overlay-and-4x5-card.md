@@ -15,7 +15,7 @@ awkwardly.
 
 - **Optional white-logo overlay.** The white ARQ logo
   (`lib/assets/arq-logo-white.png`) is composited onto every frame at 215px
-  wide on a 1080px-wide canvas; that width ratio (215/1080) is held across all
+  wide on a 1080px-wide canvas; that width ratio (472/1080) is held across all
   formats and output sizes, and the logo is resized by width only so it never
   distorts. Placement: horizontally centred, with the *bottom* edge of the
   logo resting on the vertical centre of the frame — the mark sits just above
