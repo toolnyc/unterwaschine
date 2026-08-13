@@ -149,6 +149,11 @@ h1 {
   list-style: none;
 }
 
+/* Swatches + hex input nested under the mat toggle */
+.mat-controls {
+  margin-top: 16px;
+}
+
 .palette-swatch {
   width: 36px;
   height: 36px;

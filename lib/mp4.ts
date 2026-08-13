@@ -2,10 +2,10 @@ import sharp from "sharp";
 import { createH264MP4Encoder } from "h264-mp4-encoder";
 import { HOUSE_STYLE, clamp, prepareLogoLayer, renderFrame, type RenderOptions } from "./gif";
 
-// H.264 quality: lower quantization = higher quality / larger file. Story
-// slideshows are mostly static frames (which compress to near-nothing as
-// P-frames), so we can afford a high-quality setting and still land far below
-// the equivalent GIF size.
+// H.264 quality: lower quantization = higher quality / larger file (valid
+// range [10..51]). Slideshows are mostly static frames (which compress to
+// near-nothing as P-frames), so we can afford a high-quality default and still
+// land far below the equivalent GIF size.
 const QUANTIZATION = 20;
 const FRAME_RATE = 30;
 
@@ -18,6 +18,7 @@ export async function renderMp4(photos: Buffer[], options?: RenderOptions): Prom
   }
 
   const format = options?.format ?? "story";
+  const mat = options?.mat ?? format !== "story";
   const matColor = options?.matColor ?? HOUSE_STYLE.matColor;
   const frameHoldMs = options?.frameHoldMs ?? HOUSE_STYLE.frameHoldMs;
   const scale = clamp(options?.scale ?? 1, 0.1, 1);
@@ -26,12 +27,14 @@ export async function renderMp4(photos: Buffer[], options?: RenderOptions): Prom
   const logo = options?.logoOverlay ? await prepareLogoLayer(format, scale) : null;
 
   const rendered = await Promise.all(
-    photos.map((p, i) => renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing, logo)),
+    photos.map((p, i) =>
+      renderFrame(p, format, mat, matColor, crops[i] ?? null, scale, smoothing, logo),
+    ),
   );
 
   const encoder = await createH264MP4Encoder();
   encoder.frameRate = FRAME_RATE;
-  encoder.quantizationParameter = QUANTIZATION;
+  encoder.quantizationParameter = clamp(Math.round(options?.quality ?? QUANTIZATION), 10, 51);
   const holdFrames = Math.max(1, Math.round((frameHoldMs / 1000) * FRAME_RATE));
 
   let initialized = false;

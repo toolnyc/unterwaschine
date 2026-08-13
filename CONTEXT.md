@@ -6,9 +6,9 @@ A browser-based tool for non-technical users at ARQ (a lingerie/apparel brand) t
 
 ## Core concepts
 
-**GIF card** — the output artifact. A portrait-oriented, rounded-corner image card rendered as an animated GIF. The card has a colored background border (the "mat") surrounding the photo content.
+**GIF card** — the output artifact. A portrait-oriented, rounded-corner image card rendered as an animated GIF or MP4. The card has a colored background border (the "mat") surrounding the photo content.
 
-**Mat** — the visible background color surrounding the photo inside the GIF card. Default is warm cream (`#F5E4B2`). User-adjustable.
+**Mat** — the visible background color surrounding the photo inside the GIF card. Default is warm cream (`#F5E4B2`). User-adjustable, and can be turned off entirely for a full-bleed photo (square corners, no border).
 
 **Frame** — one photo in the sequence. Each frame holds for a configurable duration before cutting to the next. No transition animations; hard cuts only.
 
@@ -20,7 +20,7 @@ A browser-based tool for non-technical users at ARQ (a lingerie/apparel brand) t
 
 **Compression** — settings that trade visual quality for smaller file size. Each frame is quantized to its own local palette with a perceptual clustering quantizer (image-q wuquant), which avoids the color casts a naive palette puts on skin. User-facing controls are **Output size** (the biggest lever) and **Colors** (2–256). Dithering and denoise are baked in (not exposed), since the quantizer makes them visually moot. See `docs/adr/0002-gif-quantization.md`.
 
-## Output spec (house style)
+## Output spec (house style defaults)
 
 - Canvas: 1560 × 2240px
 - Format: GIF (looping)
@@ -30,20 +30,24 @@ A browser-based tool for non-technical users at ARQ (a lingerie/apparel brand) t
 - Default frame hold: 700ms
 - Loop: infinite
 
+These are defaults, not constraints — every axis below is user-adjustable (see `docs/adr/0004-interleaved-export-options.md`).
+
 ## What users can change
 
-- Mat (background) color
-- Images (upload, remove, reorder)
+- Aspect ratio (ARQ card 1560×2240, ARQ card 4:5 1560×1950, story 9:16 1080×1920)
+- Mat on/off (off = full-bleed photo, square corners) and mat color
+- File format (GIF or MP4) for any aspect
+- Images (upload, remove, reorder, crop)
 - Frame hold duration
-- Corner radius (within a bounded range, e.g. 40–150px)
-- Colors (palette size, 2–256)
+- Colors (GIF palette size, 2–256) or MP4 quality (H.264 quantization)
 - Output size (e.g. full size vs. email size for a smaller file)
+- Optional white logo overlay
 
 ## What users cannot change (baked-in style)
 
-- Canvas aspect ratio (always portrait 1560 × 2240 or a scaled version)
+- Card geometry when the mat is on (60px inset, 90px corner radius at full size)
 - Transition type (always hard cut)
-- Frame layout (photo always fills the rounded card, centered/cover-fit)
+- Frame layout (photo always fills the visible card area, centered/cover-fit)
 
 ## Glossary — avoid these synonyms
 

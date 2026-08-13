@@ -22,6 +22,15 @@ export async function POST(request: Request) {
   const format: OutputFormat =
     formatParam === "story" || formatParam === "card45" ? formatParam : "card";
 
+  // File format is an explicit choice, independent of aspect: any aspect can
+  // export as GIF or MP4.
+  const fileFormat = formData.get("fileFormat") === "mp4" ? "mp4" : "gif";
+
+  // Mat defaults to the aspect's house style (cards matted, story full-bleed)
+  // when the client doesn't say; the client always sends it explicitly.
+  const matParam = formData.get("mat") as string | null;
+  const mat = matParam === "true" ? true : matParam === "false" ? false : format !== "story";
+
   const crops: (CropRect | null)[] = formData.getAll("crops").map((v) => {
     if (typeof v !== "string") return null;
     try {
@@ -35,6 +44,7 @@ export async function POST(request: Request) {
 
   const options: RenderOptions = {
     format,
+    mat,
     matColor: (formData.get("matColor") as string | null) ?? undefined,
     logoOverlay: formData.get("logoOverlay") === "true",
     frameHoldMs: parseNumber(formData.get("frameHoldMs")),
@@ -42,6 +52,7 @@ export async function POST(request: Request) {
     colors: parseNumber(formData.get("colors")),
     scale: parseNumber(formData.get("scale")),
     smoothing: parseNumber(formData.get("smoothing")),
+    quality: parseNumber(formData.get("quality")),
     crops: crops.length === files.length ? crops : undefined,
   };
 
@@ -50,9 +61,7 @@ export async function POST(request: Request) {
   );
 
   try {
-    // IG stories export as MP4 (far smaller than GIF at story resolution and
-    // what Instagram expects); the ARQ card stays a looping GIF.
-    if (format === "story") {
+    if (fileFormat === "mp4") {
       const mp4 = await renderMp4(photos, options);
       return new NextResponse(new Uint8Array(mp4), {
         status: 200,

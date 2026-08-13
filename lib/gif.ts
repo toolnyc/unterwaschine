@@ -27,28 +27,33 @@ const GIFEncoder = resolveGIFEncoder();
 
 export type OutputFormat = "card" | "card45" | "story";
 
+// Each format defines only the canvas dimensions. Whether the canvas is a
+// matted, rounded-corner card or a full-bleed photo is an independent choice
+// (see `mat` in RenderOptions).
 export const FORMATS = {
-  // ARQ house-style portrait card with cream mat and rounded corners.
+  // ARQ house-style portrait card for email.
   card: {
     canvasWidth: 1560,
     canvasHeight: 2240,
-    cornerRadius: 90,
-    matInset: 60,
   },
   // Same house-style card at a 4:5 feed aspect (1560x1950).
   card45: {
     canvasWidth: 1560,
     canvasHeight: 1950,
-    cornerRadius: 90,
-    matInset: 60,
   },
-  // Instagram story: full-bleed 9:16, no mat, no rounded corners.
+  // Instagram story aspect (1080x1920).
   story: {
     canvasWidth: 1080,
     canvasHeight: 1920,
-    cornerRadius: 0,
-    matInset: 0,
   },
+} as const;
+
+// The house card treatment, applied when the mat is enabled: a colored border
+// around the photo plus large rounded corners. With the mat off the photo is
+// full-bleed with square corners.
+export const CARD_STYLE = {
+  cornerRadius: 90,
+  matInset: 60,
 } as const;
 
 export const HOUSE_STYLE = {
@@ -70,6 +75,10 @@ export type CropRect = { left: number; top: number; width: number; height: numbe
 
 export type RenderOptions = {
   format?: OutputFormat;
+  // Mat on = house card style (colored border + rounded corners); off =
+  // full-bleed with square corners. Defaults to on for card formats, off for
+  // story, matching the pre-decoupling behavior.
+  mat?: boolean;
   matColor?: string;
   frameHoldMs?: number;
   dither?: number;
@@ -78,6 +87,9 @@ export type RenderOptions = {
   smoothing?: number;
   crops?: (CropRect | null)[];
   logoOverlay?: boolean;
+  // MP4 only: H.264 quantization parameter [10..51], lower = higher quality.
+  // Ignored by the GIF path (which uses `colors` instead).
+  quality?: number;
 };
 
 // White ARQ logo overlay: 472px wide on a 1080px-wide canvas, and that width
@@ -138,6 +150,7 @@ async function applyCrop(photo: Buffer, crop: CropRect | null): Promise<sharp.Sh
 export async function renderFrame(
   photo: Buffer,
   format: OutputFormat,
+  mat: boolean,
   matColor: string,
   crop: CropRect | null,
   scale: number,
@@ -147,8 +160,8 @@ export async function renderFrame(
   const base = FORMATS[format];
   const canvasWidth = Math.round(base.canvasWidth * scale);
   const canvasHeight = Math.round(base.canvasHeight * scale);
-  const cornerRadius = Math.round(base.cornerRadius * scale);
-  const matInset = Math.round(base.matInset * scale);
+  const cornerRadius = mat ? Math.round(CARD_STYLE.cornerRadius * scale) : 0;
+  const matInset = mat ? Math.round(CARD_STYLE.matInset * scale) : 0;
   const cardWidth = canvasWidth - matInset * 2;
   const cardHeight = canvasHeight - matInset * 2;
 
@@ -257,6 +270,7 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
   }
 
   const format = options?.format ?? "card";
+  const mat = options?.mat ?? format !== "story";
   const matColor = options?.matColor ?? HOUSE_STYLE.matColor;
   const frameHoldMs = options?.frameHoldMs ?? HOUSE_STYLE.frameHoldMs;
   const dither = options?.dither ?? HOUSE_STYLE.dither;
@@ -268,7 +282,7 @@ export async function renderGif(photos: Buffer[], options?: RenderOptions): Prom
 
   const frames = await Promise.all(
     photos.map((p, i) =>
-      renderFrame(p, format, matColor, crops[i] ?? null, scale, smoothing, logo),
+      renderFrame(p, format, mat, matColor, crops[i] ?? null, scale, smoothing, logo),
     ),
   );
 

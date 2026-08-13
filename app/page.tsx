@@ -19,21 +19,19 @@ const DEFAULT_MAT = PALETTE[0].hex;
 const BUSY_MESSAGES = ["Creating POs", "Ship-bobbing", "Making a WRO", "Texting Sarah", "Calling Vince"];
 
 type OutputFormat = "card" | "card45" | "story";
+type FileFormat = "gif" | "mp4";
 type CropRect = { left: number; top: number; width: number; height: number };
 
-// Full output canvas per format (used for the displayed pixel size).
+// Full output canvas per aspect (used for the displayed pixel size).
 const CANVAS_DIMS: Record<OutputFormat, { w: number; h: number }> = {
   card: { w: 1560, h: 2240 },
   card45: { w: 1560, h: 1950 },
   story: { w: 1080, h: 1920 },
 };
 
-// Visible photo area (used for the crop frame aspect ratio).
-const OUTPUT_DIMS: Record<OutputFormat, { w: number; h: number }> = {
-  card: { w: 1440, h: 2120 },
-  card45: { w: 1440, h: 1830 },
-  story: { w: 1080, h: 1920 },
-};
+// Mat inset per side when the background mat is on (matches CARD_STYLE on the
+// server). The visible photo area is the canvas minus twice the inset.
+const MAT_INSET = 60;
 
 const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
@@ -197,10 +195,13 @@ function CropEditor({
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [format, setFormat] = useState<OutputFormat>("card");
+  const [matEnabled, setMatEnabled] = useState(true);
   const [matColor, setMatColor] = useState(DEFAULT_MAT);
+  const [fileFormat, setFileFormat] = useState<FileFormat>("gif");
   const [logoOverlay, setLogoOverlay] = useState(false);
   const [frameSeconds, setFrameSeconds] = useState(0.7);
   const [colors, setColors] = useState(256);
+  const [mp4Quality, setMp4Quality] = useState(20);
   const [scale, setScale] = useState(0.5);
   const [crops, setCrops] = useState<Map<File, CropRect>>(new Map());
   const [editing, setEditing] = useState<File | null>(null);
@@ -229,10 +230,23 @@ export default function Home() {
     return () => clearInterval(id);
   }, [busy]);
 
-  const dims = OUTPUT_DIMS[format];
   const canvas = CANVAS_DIMS[format];
+  // Visible photo area (drives the crop frame aspect): the full canvas when
+  // full-bleed, or the canvas minus the mat border when the mat is on.
+  const dims = matEnabled
+    ? { w: canvas.w - MAT_INSET * 2, h: canvas.h - MAT_INSET * 2 }
+    : canvas;
   const aspect = dims.w / dims.h;
-  const showMat = format !== "story";
+
+  // Switching aspect applies the opinionated defaults for that aspect (story
+  // = full-bleed MP4, cards = matted GIF); each stays overridable afterwards.
+  // Re-clicking the active aspect is a no-op so overrides aren't reset.
+  function pickFormat(next: OutputFormat) {
+    if (next === format) return;
+    setFormat(next);
+    setMatEnabled(next !== "story");
+    setFileFormat(next === "story" ? "mp4" : "gif");
+  }
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     setFiles(Array.from(e.target.files ?? []));
@@ -325,7 +339,6 @@ export default function Home() {
     setBusyMsg(0);
     setError(null);
     setGifUrl(null);
-    const isStory = format === "story";
     try {
       // Vercel caps the function request body at 4.5MB; stay safely under it
       // (multipart overhead + other fields). Split the budget across photos so
@@ -350,10 +363,13 @@ export default function Home() {
         body.append("crops", JSON.stringify(crops.get(f) ?? null));
       });
       body.append("format", format);
+      body.append("mat", String(matEnabled));
       body.append("matColor", matColor);
+      body.append("fileFormat", fileFormat);
       body.append("logoOverlay", String(logoOverlay));
       body.append("frameHoldMs", String(Math.round(frameSeconds * 1000)));
       body.append("colors", String(colors));
+      body.append("quality", String(mp4Quality));
       body.append("scale", String(scale));
       const res = await fetch("/api/render", { method: "POST", body });
       if (!res.ok) {
@@ -361,7 +377,7 @@ export default function Home() {
         throw new Error(data.error ?? `Render failed (${res.status}).`);
       }
       const blob = await res.blob();
-      setOutputKind(isStory ? "mp4" : "gif");
+      setOutputKind(fileFormat);
       setGifUrl(URL.createObjectURL(blob));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -417,28 +433,93 @@ export default function Home() {
       )}
 
       <div className="controls">
-        <p className="controls-label">Output format</p>
+        <p className="controls-label">Aspect ratio</p>
         <div className="seg">
           <button
             className="seg-btn"
             aria-pressed={format === "card"}
-            onClick={() => setFormat("card")}
+            onClick={() => pickFormat("card")}
           >
             ARQ card
           </button>
           <button
             className="seg-btn"
             aria-pressed={format === "card45"}
-            onClick={() => setFormat("card45")}
+            onClick={() => pickFormat("card45")}
           >
             ARQ card 4:5
           </button>
           <button
             className="seg-btn"
             aria-pressed={format === "story"}
-            onClick={() => setFormat("story")}
+            onClick={() => pickFormat("story")}
           >
-            IG story
+            IG story 9:16
+          </button>
+        </div>
+      </div>
+
+      <div className="controls">
+        <p className="controls-label">Background</p>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={matEnabled}
+            onChange={(e) => setMatEnabled(e.target.checked)}
+          />
+          Mat with rounded corners (off = full-bleed)
+        </label>
+        {matEnabled && (
+          <div className="mat-controls">
+            <ul className="palette">
+              {PALETTE.map((swatch) => (
+                <li key={swatch.hex}>
+                  <button
+                    className="palette-swatch"
+                    style={{ background: swatch.hex }}
+                    aria-label={swatch.name}
+                    aria-pressed={matColor.toLowerCase() === swatch.hex.toLowerCase()}
+                    onClick={() => setMatColor(swatch.hex)}
+                    title={swatch.name}
+                  />
+                </li>
+              ))}
+            </ul>
+            <div className="hex-row">
+              <span className="hex-preview" style={{ background: hexValid ? matColor : "#fff" }} />
+              <input
+                className="hex-input"
+                type="text"
+                value={matColor}
+                spellCheck={false}
+                aria-invalid={!hexValid}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setMatColor(v.startsWith("#") ? v : `#${v.replace(/#/g, "")}`);
+                }}
+                placeholder="#F5E4B2"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="controls">
+        <p className="controls-label">File format</p>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            aria-pressed={fileFormat === "gif"}
+            onClick={() => setFileFormat("gif")}
+          >
+            GIF
+          </button>
+          <button
+            className="seg-btn"
+            aria-pressed={fileFormat === "mp4"}
+            onClick={() => setFileFormat("mp4")}
+          >
+            MP4
           </button>
         </div>
       </div>
@@ -454,41 +535,6 @@ export default function Home() {
           White ARQ logo across every frame
         </label>
       </div>
-
-      {showMat && (
-        <div className="controls">
-          <p className="controls-label">Background color</p>
-          <ul className="palette">
-            {PALETTE.map((swatch) => (
-              <li key={swatch.hex}>
-                <button
-                  className="palette-swatch"
-                  style={{ background: swatch.hex }}
-                  aria-label={swatch.name}
-                  aria-pressed={matColor.toLowerCase() === swatch.hex.toLowerCase()}
-                  onClick={() => setMatColor(swatch.hex)}
-                  title={swatch.name}
-                />
-              </li>
-            ))}
-          </ul>
-          <div className="hex-row">
-            <span className="hex-preview" style={{ background: hexValid ? matColor : "#fff" }} />
-            <input
-              className="hex-input"
-              type="text"
-              value={matColor}
-              spellCheck={false}
-              aria-invalid={!hexValid}
-              onChange={(e) => {
-                const v = e.target.value;
-                setMatColor(v.startsWith("#") ? v : `#${v.replace(/#/g, "")}`);
-              }}
-              placeholder="#F5E4B2"
-            />
-          </div>
-        </div>
-      )}
 
       <div className="controls">
         <p className="controls-label">Frame duration (seconds)</p>
@@ -521,20 +567,36 @@ export default function Home() {
             <option value={0.35}>Small (35%)</option>
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="colors">Colors</label>
-          <select
-            id="colors"
-            className="num-input"
-            value={colors}
-            onChange={(e) => setColors(Number(e.target.value))}
-          >
-            <option value={256}>256 (best quality)</option>
-            <option value={128}>128</option>
-            <option value={64}>64</option>
-            <option value={32}>32 (smallest file)</option>
-          </select>
-        </div>
+        {fileFormat === "gif" ? (
+          <div className="field">
+            <label htmlFor="colors">Colors</label>
+            <select
+              id="colors"
+              className="num-input"
+              value={colors}
+              onChange={(e) => setColors(Number(e.target.value))}
+            >
+              <option value={256}>256 (best quality)</option>
+              <option value={128}>128</option>
+              <option value={64}>64</option>
+              <option value={32}>32 (smallest file)</option>
+            </select>
+          </div>
+        ) : (
+          <div className="field">
+            <label htmlFor="quality">Quality</label>
+            <select
+              id="quality"
+              className="num-input"
+              value={mp4Quality}
+              onChange={(e) => setMp4Quality(Number(e.target.value))}
+            >
+              <option value={20}>High (larger file)</option>
+              <option value={26}>Medium</option>
+              <option value={32}>Low (smallest file)</option>
+            </select>
+          </div>
+        )}
       </div>
 
       <button onClick={generate} disabled={busy || files.length === 0}>
@@ -555,7 +617,7 @@ export default function Home() {
               </span>
             ))}
           </span>
-        ) : format === "story" ? (
+        ) : fileFormat === "mp4" ? (
           "Generate MP4"
         ) : (
           "Generate GIF"
